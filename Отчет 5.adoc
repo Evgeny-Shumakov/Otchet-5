@@ -1,0 +1,248 @@
+:imagesdir: YEP
+== Отчет 5
+Цель: передавать раз в 0.5 секунды фразу Hello World! с использованием прерывания
+
+1. Подключиться к внешнему источнику тактирования
+2. Настроить таймер 2 на 0.5 секунды
+3. Подключить модуль UART2 к шине тактирования
+
+4. Настроить порты PORT A.2 как TX, Port A.3 как RX на альтернативную функцию работы с UART в режим Push-Pull(двухтактный выход) + Pull Up(подтяжка к 1)
+
+5. Настроить USART2 на скорость 19200 бит/c, 2 стоп бит, 1 старт бит, без проверки четности, режим дискретизации 1/8, 8 бит данных.​
+
+6. Разрешить глобальное прерывание по USART​
+7. Разрешить прерывание по передаче​
+8. Включить USART2
+9. Включить переду данных
+
+Код
+[source,]
+----
+#include "gpioaregisters.hpp"  //for Gpioa
+#include "gpiocregisters.hpp"  //for Gpioc
+#include "gpiobregisters.hpp"  //for Gpiob
+#include "gpioaregisters.hpp"
+#include "rccregisters.hpp"    //for RCC
+#include "tim2registers.hpp"   //for SPI2
+#include "nvicregisters.hpp"   //for NVIC
+#include "usart2registers.hpp" //for USART2
+
+using namespace std ;
+
+
+extern "C"
+{
+int __low_level_init(void)
+{
+  RCC::CR::HSEON::On::Set();
+  while(!RCC::CR::HSERDY::Ready::IsSet())
+  {
+  };
+  
+  RCC::CFGR::SW::Hse::Set();
+  while(!RCC::CFGR::SWS::Hse::IsSet())
+  {
+  };
+  
+  RCC::APB1ENR::TIM2EN::Enable::Set();
+  
+  TIM2::PSC::Write(7999);
+  TIM2::ARR::Write(500);
+  TIM2::CR1::URS::OverflowEvent::Set(); 
+  TIM2::CR1::CEN::Enable::Set();
+  
+  RCC::AHB1ENR::GPIOAEN::Enable::Set();
+  GPIOA::MODER::MODER5::Output::Set();
+  
+  RCC::APB1ENR::USART2EN::Enable::Set();
+  
+  GPIOA::MODER::MODER2::Alternate::Set();
+  GPIOA::MODER::MODER3::Alternate::Set();
+  GPIOA::OTYPER::OT2::OutputPushPull::Set();
+  GPIOA::OTYPER::OT3::OutputPushPull::Set();
+  GPIOA::PUPDR::PUPDR2::PullUp::Set();
+  GPIOA::PUPDR::PUPDR3::PullUp::Set();
+  GPIOA::AFRL::AFRL2::Af7::Set();
+  GPIOA::AFRL::AFRL3::Af7::Set();
+  USART2::BRR::Write(832);
+  USART2::CR1::UE::Enable::Set();
+  
+  USART2::CR1::TE::Enable::Set();
+  
+  return 1;
+}
+}
+
+
+template <typename Port, std::uint32_t pinNum>
+struct Led //Realizacia perecluchenia cherez Toggle
+{
+  static void Toggle()
+  {
+    Port::ODR::Toggle(1<<pinNum);
+  }
+};
+
+int main()
+{
+  const char* pStr = "Hello world" ;
+  const char *ptr = pStr ;
+  for( ; ;)
+  {
+    if (TIM2::SR::UIF::UpdatePending::IsSet())
+      {
+        TIM2::SR::UIF::NoUpdate::Set();
+        
+        while (*ptr != 0)
+        {
+          USART2::DR::Write(*ptr++);
+          //while (USART2::SR::TXE::DataRegisterNotEmpty::IsSet()) 
+         // {
+         // }
+        }
+        ptr = pStr ;        
+      }
+  }
+    
+  return 0 ;
+}
+----
+
+Код SETUP
+[source,]
+----
+#include "interrupthandler.hpp"  //for InterruptHandler
+
+extern "C" void __iar_program_start(void) ;
+
+using tIntFunct = void(*)();
+using tIntVectItem = union {tIntFunct __fun; void * __ptr;};
+#pragma segment = "CSTACK"
+#pragma location = ".intvec"
+const tIntVectItem __vector_table[] =
+{
+  { .__ptr = __sfe( "CSTACK" ) }, //????????????? ????????? ?? ????
+    __iar_program_start, //????? ??????? ????? ????? ? ?????????
+
+  InterruptHandler::DummyHandler,
+  InterruptHandler::DummyHandler,
+  InterruptHandler::DummyHandler,
+  InterruptHandler::DummyHandler,
+  InterruptHandler::DummyHandler,
+  0,
+  0,
+  0,
+  0,
+  InterruptHandler::DummyHandler,
+  InterruptHandler::DummyHandler,
+  0,
+  InterruptHandler::DummyHandler,
+  InterruptHandler::DummyHandler,
+  //External Interrupts
+  InterruptHandler::DummyHandler,         //Window Watchdog
+  InterruptHandler::DummyHandler,         //PVD through EXTI Line detect/EXTI16
+  InterruptHandler::DummyHandler,   //Tamper and Time Stamp/EXTI21
+  InterruptHandler::DummyHandler,         //RTC Wakeup/EXTI22
+  InterruptHandler::DummyHandler,             //FLASH
+  InterruptHandler::DummyHandler,               //RCC
+  InterruptHandler::DummyHandler,         //EXTI Line 0
+  InterruptHandler::DummyHandler,         //EXTI Line 1
+  InterruptHandler::DummyHandler,         //EXTI Line 2
+  InterruptHandler::DummyHandler,        //EXTI Line 3
+  InterruptHandler::DummyHandler,         //EXTI Line 4
+  InterruptHandler::DummyHandler,       //DMA1 Stream 0
+  InterruptHandler::DummyHandler,       //DMA1 Stream 1
+  InterruptHandler::DummyHandler,       //DMA1 Stream 2
+  InterruptHandler::DummyHandler,       //DMA1 Stream 3
+  InterruptHandler::DummyHandler,       //DMA1 Stream 4
+  InterruptHandler::DummyHandler,      //DMA1 Stream 5
+  InterruptHandler::DummyHandler,      //DMA1 Stream 6
+  InterruptHandler::DummyHandler,              //ADC1
+  0,   //USB High Priority
+  0,    //USB Low  Priority
+  0,               //DAC
+  0,              //COMP through EXTI Line
+  InterruptHandler::DummyHandler,         //EXTI Line 9..5
+  InterruptHandler::DummyHandler,              //TIM9/TIM1 Break interrupt
+  InterruptHandler::DummyHandler,             //TIM10/TIM1 Update interrupt
+  InterruptHandler::DummyHandler,             //TIM11/TIM1 Trigger/Commutation interrupts
+  InterruptHandler::DummyHandler,			   //TIM1 Capture Compare interrupt
+  InterruptHandler::DummyHandler,        //TIM2
+  InterruptHandler::DummyHandler,         //TIM3
+  InterruptHandler::DummyHandler,        ////TIM4
+  InterruptHandler::DummyHandler,        //I2C1_EV
+  InterruptHandler::DummyHandler, //I2C1_ER
+  InterruptHandler::DummyHandler, //I2C2_EV
+  InterruptHandler::DummyHandler, // I2C2_ER
+  InterruptHandler::DummyHandler, //SPI1
+  InterruptHandler::DummyHandler, //SPI2
+  InterruptHandler::DummyHandler, //USART1
+  InterruptHandler::USART2Handler, //USART2
+  0,
+  InterruptHandler::DummyHandler, //EXTI15_10
+  InterruptHandler::DummyHandler, //EXTI17 / RTC_Alarm
+  InterruptHandler::DummyHandler, //EXTI18 /OTG_FS_WKUP
+  0,
+  0,
+  0,
+  0,
+  InterruptHandler::DummyHandler,  //DMA1_Stream7
+    0,
+  InterruptHandler::DummyHandler, //SDIO
+  InterruptHandler::DummyHandler, //TIM5
+  InterruptHandler::DummyHandler, //SPI3
+
+};
+
+extern "C" void __cmain(void) ;
+extern "C" __weak void __iar_init_core(void) ;
+extern "C" __weak void __iar_init_vfp(void) ;
+
+#pragma required = __vector_table
+void __iar_program_start(void) {
+  __iar_init_core() ;
+  __iar_init_vfp() ;
+  __cmain() ;
+}
+----
+Код в interrupthandler
+[source,]
+----
+#ifndef REGISTERS_INTERRUPTHANDLER_HPP
+#define REGISTERS_INTERRUPTHANDLER_HPP
+
+
+#include "gpioaregisters.hpp"  //for Gpioa
+#include "gpiocregisters.hpp"  //for Gpioc
+#include "gpiobregisters.hpp"  //for Gpiob
+#include "rccregisters.hpp"    //for RCC
+#include "tim2registers.hpp"   //for SPI2
+#include "nvicregisters.hpp"   //for NVIC
+#include "usart2registers.hpp" //for USART2
+
+class InterruptHandler {
+  public:
+    static void DummyHandler() { for(;;) {} }
+    static void USART2Handler()
+    {
+      char str[] = "Hello World! ";
+      char *ptr;
+      ptr = &str[0];
+      for(;;)
+      {
+         USART2::DR::Write(*ptr) ;
+         while(!USART2::SR::TXE::DataRegisterEmpty::IsSet()) ;
+         ptr ++ ;
+         if (*ptr == 0)
+            {
+            ptr = str ;
+            }
+        while(TIM2::SR::UIF::NoUpdate::IsSet()) ;
+              TIM2::SR::UIF::NoUpdate::Set();
+        }
+    }
+};
+----
+По поводу вывода hellow world по строчно. Не знаю как это сделать. Только так:
+
+image::Figure2.png[]
